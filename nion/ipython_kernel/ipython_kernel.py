@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import typing
+import types
+import ast
 import threading
 import asyncio
 import zmq
@@ -18,14 +20,17 @@ import time
 import io
 import functools
 import code as code_module
+import rlcompleter
+import re
 
+from nion.utils import Registry
 from nion.ipython_kernel import zmqstream
 from nion.ipython_kernel import heartbeat
 from nion.ipython_kernel import paths
 
 logging.basicConfig()
 logger = logging.getLogger('nionswift-ipython-kernel')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 IPythonMessageMetadata: typing.TypeAlias = dict[str, typing.Any]
@@ -36,6 +41,36 @@ IPythonMessageBuffers: typing.TypeAlias = list[bytes]
 PROTOCOL_VERSION = '5.4'
 
 CONNECTION_FILE_NAME = "nionswift-ipython-kernel.json"
+MESSAGE_HANDLER_REGISTRY_NAME = 'ipython-message-handler'
+
+
+def get_shell_message_handlers_by_messsage_type() -> dict[str, MessageHandler]:
+    registered_handlers = Registry.get_components_by_type(MESSAGE_HANDLER_REGISTRY_NAME)
+    shell_message_handlers: dict[str, MessageHandler] = dict()
+    for handler in registered_handlers:
+        if not handler.msg_type in shell_message_handlers or handler.priority > shell_message_handlers[handler.msg_type].priority:
+            shell_message_handlers[handler.msg_type] = handler
+    return shell_message_handlers
+
+
+def get_shell_message_handler_for_message_type(msg_type: str) -> MessageHandler | None:
+    shell_message_handlers = get_shell_message_handlers_by_messsage_type()
+    return shell_message_handlers.get(msg_type)
+
+
+def register_shell_handler(handler: MessageHandler) -> None:
+    shell_message_handlers = get_shell_message_handlers_by_messsage_type()
+    if handler.msg_type in shell_message_handlers:
+        existing_handler = shell_message_handlers[handler.msg_type]
+        if handler.priority <= existing_handler.priority:
+            logger.warning(f'NOT USING handler {handler.__class__.__name__} for message type {handler.msg_type} because '
+                           f'its priority is not higher than exisiting handler {existing_handler.__class__.__name__} '
+                           f'({handler.priority} <= {existing_handler.priority}')
+        else:
+            logger.info(f'Handler {handler.__class__.__name__} for message type {handler.msg_type} will be used instead of '
+                        f'exisiting handler {existing_handler.__class__.__name__} because its priority is higher '
+                        f'({handler.priority} > {existing_handler.priority}')
+    Registry.register_component(handler, {MESSAGE_HANDLER_REGISTRY_NAME})
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -190,11 +225,20 @@ class ConnectionInfo:
             json.dump(self_dict, f, indent=2)
 
 
+@dataclasses.dataclass(kw_only=True)
+class KernelData:
+    execution_counter: int = 0
+    namespace: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
+
+
 class MessageHandler(typing.Protocol):
     msg_type: str # Message type this handler can process
     reply_msg_type: str # Message type of replies coming from this handler
+    priority: int # If a handler for a message type already exists, registering a new handler will overwrite the existing
+                  # one only if the new handler has a higher priority than the exisiting one. The default handlers
+                  # implemented here all have priority 0, so any custom handler with positive priority will get used.
 
-    def process_request(self, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+    def process_request(self, kernel_data: KernelData, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
         raise NotImplementedError()
 
 
@@ -203,37 +247,66 @@ class ExecuteRequestMessageHandler(MessageHandler):
     msg_type = 'execute_request'
     reply_msg_type = 'execute_reply'
 
-    def __init__(self, locals_: typing.Optional[typing.Dict[str, typing.Any]]) -> None:
-        super().__init__()
-        self.__execution_counter = 0
-        self.__locals = locals_ or locals()
+    @staticmethod
+    def compile_code(code: str) -> typing.List[types.CodeType]:
+        ast_obj = ast.parse(code)
+        compiled_code: typing.List[types.CodeType] = list()
+        # If we have a single statement, we can just compile it and return
+        if len(ast_obj.body) < 2:
+            compiled_code.append(compile(code, '<string>', 'single'))
+            return compiled_code
+        # If we have multiple statements, we try to separate the last one from the rest, so that
+        # statements like "x + 1" in the last line of a code block get printed automatically, which
+        # imitates what ipython does.
+        if isinstance(ast_obj.body[-1], ast.Expr):
+            # Try to unparse the last expression and compare it to the input code. If it matches, we
+            # try to compile everything but the last expression
+            unparsed = ast.unparse(ast_obj.body[-1]) # type: ignore
+            if unparsed == code[-len(unparsed):]:
+                try:
+                    compiled_code.append(compile(code[:-len(unparsed)], '<string>', 'exec'))
+                    compiled_code.append(compile(unparsed, '<string>', 'single'))
+                except:
+                    pass
+                else:
+                    return compiled_code
+        # If we end up here, either the last statement of the code block was not an expression or our
+        # separation didn't work. As fallback, compile code object in "exec" mode, which will not auto-
+        # print expression return values but will always work if the code block was valid.
+        compiled_code.append(compile(code, '<string>', 'exec'))
+        return compiled_code
 
-    def process_request(self, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+    @staticmethod
+    def run_code(code_list: list[types.CodeType], locals_: dict[str, typing.Any] | None = None) -> None:
+        for c in code_list:
+            locals_ = locals_ if locals_ is not None else locals()
+            exec(c, locals_)
+
+    def process_request(self, kernel_data: KernelData, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
         if not content.get('silent') and content.get('store_history'):
-            self.__execution_counter += 1
+            kernel_data.execution_counter += 1
         status = 'ok'
         exception: typing.Optional[BaseException] = None
         try:
             code = typing.cast(str, content['code'])
-            compiled = compile(code, '<string>', 'single')
+            compiled = ExecuteRequestMessageHandler.compile_code(code)
         except Exception as e:
             status = 'error'
             exception = e
         else:
             try:
-                exec(compiled, globals(), self.__locals)
+                ExecuteRequestMessageHandler.run_code(compiled, locals_=kernel_data.namespace)
             except BaseException as e:
                 status = 'error'
                 exception = e
-
-        result: typing.Dict[str, typing.Any] = {'status': status, 'execution_count': self.__execution_counter}
+        result: typing.Dict[str, typing.Any] = {'status': status, 'execution_count': kernel_data.execution_counter}
         if status == 'ok':
             result['user_expressions'] = dict()
         elif status == 'error':
             if exception is not None:
                 result['ename'] = type(exception).__name__
                 result['evalue'] = str(exception)
-                result['traceback'] = str(exception.__traceback__)
+                result['traceback'] = traceback.format_tb(exception.__traceback__)
                 traceback.print_exception(exception)
         return result
 
@@ -242,7 +315,7 @@ class KernelInfoMessageHandler(MessageHandler):
     msg_type = 'kernel_info_request'
     reply_msg_type = 'kernel_info_reply'
 
-    def process_request(self, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+    def process_request(self, kernel_data: KernelData, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
         return {'status': 'ok',
                 'protocol_version': PROTOCOL_VERSION,
                 'implementation': 'nionswift',
@@ -260,7 +333,7 @@ class IsCompleteHandler(MessageHandler):
     msg_type = 'is_complete_request'
     reply_msg_type = 'is_complete_reply'
 
-    def process_request(self, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+    def process_request(self, kernel_data: KernelData, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
         code = typing.cast(str, content['code'])
         status = 'unknown'
         try:
@@ -286,22 +359,141 @@ class IsCompleteHandler(MessageHandler):
         return reply
 
 
+class CompleteRequestHandler(MessageHandler):
+    msg_type = 'complete_request'
+    reply_msg_type = 'complete_reply'
+
+    delims = " \t\n`~!@#$%^&*()-=+[{]}\\|;:\'\",<>/?"
+
+    def process_request(self, kernel_data: KernelData, content: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+        """
+        content = {
+        # The code context in which completion is requested
+        # this may be up to an entire multiline cell, such as
+        # 'foo = a.isal'
+        'code' : str,
+
+        # The cursor position within 'code' (in unicode characters) where completion is requested
+        'cursor_pos' : int,
+        }
+
+
+        content = {
+        # status should be 'ok' unless an exception was raised during the request,
+        # in which case it should be 'error', along with the usual error message content
+        # in other messages.
+        'status' : 'ok'
+
+        # The list of all matches to the completion request, such as
+        # ['a.isalnum', 'a.isalpha'] for the above example.
+        'matches' : list,
+
+        # The range of text that should be replaced by the above matches when a completion is accepted.
+        # typically cursor_end is the same as cursor_pos in the request.
+        'cursor_start' : int,
+        'cursor_end' : int,
+
+        # Information that frontend plugins might use for extra display information about completions.
+        'metadata' : dict,
+        }
+        """
+        code = content.get('code', '')
+        cursor_pos = content.get('cursor_pos')
+        cursor_start = cursor_pos
+        completion_code = code[:cursor_pos]
+        status = 'ok'
+        exception = None
+        matches: list[str] = []
+        rx = "([" + re.escape(CompleteRequestHandler.delims) + "])"
+        # the parenthesis around rx make it a group. This will cause split to keep the characters in rx in the
+        # list, so that we can reconstruct the original string later
+        split_code = re.split(rx, completion_code)
+        if len(split_code) > 0:
+            completion_term = split_code[-1]
+            if completion_term.strip():
+                cursor_start = cursor_pos - len(completion_term)
+                try:
+                    completer = rlcompleter.Completer(namespace=kernel_data.namespace)
+                    for i in range(100):
+                        match = completer.complete(completion_term, i)
+                        if match is not None:
+                            matches.append(match)
+                        else:
+                            break
+                except Exception as e:
+                    status = 'error'
+                    exception = e
+
+        result: dict[str, typing.Any] = {'status': status, 'metadata': dict()}
+        if status == 'ok':
+            result['matches'] = matches
+            result['cursor_start'] = cursor_start
+            result['cursor_end'] = cursor_pos
+        elif status == 'error':
+            if exception is not None:
+                result['ename'] = type(exception).__name__
+                result['evalue'] = str(exception)
+                result['traceback'] = traceback.format_tb(exception.__traceback__)
+                traceback.print_exception(exception)
+        return result
+
+
 class StdStreamCatcher(io.TextIOWrapper):
 
-    def __init__(self, buffer: typing.Any, **kwargs: typing.Any) -> None:
+    def __init__(self, buffer: typing.Any, event_loop: asyncio.AbstractEventLoop, bufsize=100, **kwargs: typing.Any) -> None:
         super().__init__(buffer, **kwargs)
+        self.__event_loop = event_loop
+        self.__lock = threading.RLock()
+        self.__bufsize = bufsize
+        self.__buffer: list[str] = list()
+        self.__handle: typing.Optional[asyncio.TimerHandle] = None
         self.on_stream_write: typing.Optional[typing.Callable[[str], None]] = None
+
+    def _periodic(self) -> None:
+        with self.__lock:
+            if self.__buffer:
+                self._flush()
+        self.__handle = None
 
     def write(self, s: str) -> int:
         if self.on_stream_write:
-            self.on_stream_write(s)
+            with self.__lock:
+                self.__buffer.append(s)
+                if len(self.__buffer) > self.__bufsize:
+                    self._flush()
+                else:
+                    self.__handle = self.__event_loop.call_later(0.06, self._periodic)
         return super().write(s)
+    
+    def _flush(self) -> None:
+        with self.__lock:
+            if self.__buffer and self.on_stream_write:
+                s = ''.join(self.__buffer)
+                self.__buffer.clear()
+                self.on_stream_write(s)
+
+    def flush(self) -> None:
+        self._flush()
+        return super().flush()
+    
+    def close(self) -> None:
+        try:
+            if self.__handle:
+                self.__handle.cancel()
+        except AttributeError:
+            pass
+        self._flush()
+        return super().close()
 
 
 class IpythonKernel:
-    def __init__(self, settings: KernelSettings, event_loop: asyncio.AbstractEventLoop | None = None) -> None:
+    def __init__(self,
+                 settings: KernelSettings,
+                 event_loop: asyncio.AbstractEventLoop | None = None,
+                 kernel_data: KernelData | None = None) -> None:
         self.__settings = settings
         self.__event_loop = event_loop or asyncio.get_event_loop()
+        self.__kernel_data = kernel_data if kernel_data is not None else KernelData()
 
         self.__context = zmq.asyncio.Context()
         self.__iopub_socket = typing.cast(zmq.Socket[typing.Any], None)
@@ -327,29 +519,42 @@ class IpythonKernel:
         self.__control_thread = typing.cast(threading.Thread, None)
         self.__heartbeat_thread = typing.cast(heartbeat.Heartbeat, None)
 
-        self.__shell_handlers: dict[str, MessageHandler] = {}
-
         self.__parent_header: typing.Optional[IPythonMessageHeader] = None
 
         self.__stdout_catcher = typing.cast(StdStreamCatcher, None)
         self.__stderr_catcher = typing.cast(StdStreamCatcher, None)
+        self.__exisiting_stdout: typing.Any = None
+        self.__exisiting_stderr: typing.Any = None
+
+    @property
+    def kernel_data(self) -> KernelData:
+        return self.__kernel_data
 
     def close(self) -> None:
         self.__shell_stream.close()
         self.__control_stream.close()
         self.__stdin_stream.close()
+        sys.stdout = self.__exisiting_stdout
+        sys.stderr = self.__exisiting_stderr
+        self.__exisiting_stdout = None
+        self.__exisiting_stderr = None
+        self.__stdout_catcher.close()
+        self.__stderr_catcher.close()
+        self.__stdout_catcher = typing.cast(StdStreamCatcher, None)
+        self.__stderr_catcher = typing.cast(StdStreamCatcher, None)
         self.__iopub_socket.close(linger=1000)
         self.__context.term()
-
         self._remove_connection_file()
 
     def start(self) -> str:
         self._create_streams()
-        self.__stdout_catcher = StdStreamCatcher(sys.__stdout__.buffer)
+        self.__stdout_catcher = StdStreamCatcher(sys.__stdout__.buffer, self.__event_loop)
         self.__stdout_catcher.on_stream_write = self._send_stdout_message_to_iopub
+        self.__exisiting_stdout = sys.stdout
         sys.stdout = self.__stdout_catcher
-        self.__stderr_catcher = StdStreamCatcher(sys.__stderr__.buffer)
+        self.__stderr_catcher = StdStreamCatcher(sys.__stderr__.buffer, self.__event_loop)
         self.__stderr_catcher.on_stream_write = self._send_stderr_message_to_iopub
+        self.__exisiting_stderr = sys.stderr
         sys.stderr = self.__stderr_catcher
         return self._write_connection_file()
 
@@ -458,12 +663,12 @@ class IpythonKernel:
             logger.debug(f'Got shell message: {ipython_message.header.msg_type}:\n{dataclasses.asdict(ipython_message)}')
             await self.publish_kernel_state('busy', ipython_message.header)
 
-            handler = self.__shell_handlers.get(ipython_message.header.msg_type)
+            handler = get_shell_message_handler_for_message_type(ipython_message.header.msg_type)
             if handler:
                 logger.debug(f'Calling handler {handler.msg_type}')
                 self.__parent_header = ipython_message.header
                 reply_msg_type = handler.reply_msg_type
-                result = handler.process_request(ipython_message.content)
+                result = handler.process_request(self.__kernel_data, ipython_message.content)
                 result_header = IPythonMessageHeader(msg_id=new_id(),
                                                      session=self._id,
                                                      msg_type=handler.reply_msg_type,
@@ -496,9 +701,3 @@ class IpythonKernel:
 
     async def process_control_message(self, msgs: list[bytes]) -> list[bytes]:
         return []
-
-
-    def register_shell_handler(self, handler: MessageHandler) -> None:
-        if handler.msg_type in self.__shell_handlers:
-            raise ValueError(f'A handler for message type {handler.msg_type} is already registered.')
-        self.__shell_handlers[handler.msg_type] = handler
