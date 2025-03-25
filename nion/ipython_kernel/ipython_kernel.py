@@ -440,16 +440,18 @@ class CompleteRequestHandler(MessageHandler):
 
 class StdStreamCatcher(io.TextIOWrapper):
 
-    def __init__(self, buffer: typing.Any, event_loop: asyncio.AbstractEventLoop, bufsize=100, **kwargs: typing.Any) -> None:
+    def __init__(self, buffer: typing.Any, event_loop: asyncio.AbstractEventLoop, bufsize=100, existing_stream: typing.Any = None, **kwargs: typing.Any) -> None:
         super().__init__(buffer, **kwargs)
         self.__event_loop = event_loop
-        self.__lock = threading.RLock()
         self.__bufsize = bufsize
+        self.__existing_stream = existing_stream
+        self.__lock = threading.RLock()
         self.__buffer: list[str] = list()
-        self.__handle: typing.Optional[asyncio.TimerHandle] = None
+        self.__handle: typing.Optional[asyncio.Task] = None
         self.on_stream_write: typing.Optional[typing.Callable[[str], None]] = None
 
-    def _periodic(self) -> None:
+    async def _periodic(self, *, delay: float = 0.0) -> None:
+        await asyncio.sleep(delay)
         with self.__lock:
             if self.__buffer:
                 self._flush()
@@ -462,8 +464,12 @@ class StdStreamCatcher(io.TextIOWrapper):
                 if len(self.__buffer) > self.__bufsize:
                     self._flush()
                 else:
-                    self.__handle = self.__event_loop.call_later(0.06, self._periodic)
-        return super().write(s)
+                    self.__handle = self.__event_loop.create_task(self._periodic(delay=0.06))
+        if self.__existing_stream:
+            self.__existing_stream.write(s)
+        else:
+            return super().write(s)
+        return len(s)
     
     def _flush(self) -> None:
         with self.__lock:
@@ -474,7 +480,10 @@ class StdStreamCatcher(io.TextIOWrapper):
 
     def flush(self) -> None:
         self._flush()
-        return super().flush()
+        if self.__existing_stream:
+            self.__existing_stream.flush()
+        else:
+            return super().flush()
     
     def close(self) -> None:
         try:
@@ -530,29 +539,33 @@ class IpythonKernel:
     def kernel_data(self) -> KernelData:
         return self.__kernel_data
 
+    @property
+    def parent_header(self) -> IPythonMessageHeader:
+        return self.__parent_header or IPythonMessageHeader()
+
     def close(self) -> None:
         self.__shell_stream.close()
         self.__control_stream.close()
         self.__stdin_stream.close()
-        sys.stdout = self.__exisiting_stdout
-        sys.stderr = self.__exisiting_stderr
-        self.__exisiting_stdout = None
-        self.__exisiting_stderr = None
         self.__stdout_catcher.close()
         self.__stderr_catcher.close()
         self.__stdout_catcher = typing.cast(StdStreamCatcher, None)
         self.__stderr_catcher = typing.cast(StdStreamCatcher, None)
+        sys.stdout = self.__exisiting_stdout
+        sys.stderr = self.__exisiting_stderr
+        self.__exisiting_stdout = None
+        self.__exisiting_stderr = None
         self.__iopub_socket.close(linger=1000)
         self.__context.term()
         self._remove_connection_file()
 
     def start(self) -> str:
         self._create_streams()
-        self.__stdout_catcher = StdStreamCatcher(sys.__stdout__.buffer, self.__event_loop)
+        self.__stdout_catcher = StdStreamCatcher(sys.__stdout__.buffer, self.__event_loop, existing_stream=sys.stdout if sys.stdout is not sys.__stdout__ else None)
         self.__stdout_catcher.on_stream_write = self._send_stdout_message_to_iopub
         self.__exisiting_stdout = sys.stdout
         sys.stdout = self.__stdout_catcher
-        self.__stderr_catcher = StdStreamCatcher(sys.__stderr__.buffer, self.__event_loop)
+        self.__stderr_catcher = StdStreamCatcher(sys.__stderr__.buffer, self.__event_loop, existing_stream=sys.stderr if sys.stderr is not sys.__stderr__ else None)
         self.__stderr_catcher.on_stream_write = self._send_stderr_message_to_iopub
         self.__exisiting_stderr = sys.stderr
         sys.stderr = self.__stderr_catcher
@@ -560,7 +573,7 @@ class IpythonKernel:
 
     def _send_sys_stream_message_to_iopub(self, stream_name: str, msg: str) -> None:
         header = IPythonMessageHeader(msg_id=new_id(), session=self._id, msg_type='stream', date=current_date())
-        message = IPythonMessage(header=header, parent_header=self.__parent_header or IPythonMessageHeader(), metadata=dict(), content={'name': stream_name, 'text': msg})
+        message = IPythonMessage(header=header, parent_header=self.parent_header, metadata=dict(), content={'name': stream_name, 'text': msg})
         self.__event_loop.create_task(self.send_iopub_message(message, f'stream.{stream_name}'))
 
     _send_stdout_message_to_iopub = functools.partialmethod(_send_sys_stream_message_to_iopub, 'stdout')
@@ -649,8 +662,14 @@ class IpythonKernel:
         logger.debug(f'Sending iopub message with topic {topic}:\n{dataclasses.asdict(msg)}')
         await self.__iopub_socket.send_multipart(serialized_message.to_zmq_multipart_message(), copy=True)
 
+    async def clear_output(self, wait: bool) -> None:
+        header = IPythonMessageHeader(msg_id=new_id(), session=self._id, msg_type='clear_output', date=current_date())
+        message = IPythonMessage(header=header, parent_header=self.parent_header, metadata=dict(), content={'wait': wait})
+        await self.send_iopub_message(message, f'kernel.{self._id}.clear_output')
+
     async def process_shell_message(self, msgs: typing.Sequence[bytes | zmq.Frame]) -> list[bytes]:
         reply_msg_type = 'error'
+        result_message: typing.Optional[IPythonMessage] = None
         try:
             serialized_ipython_message = SerializedIPythonMessage.from_zmq_multipart_message(msgs)
             ipython_message = IPythonMessage.from_serialized_ipython_message(serialized_ipython_message)
@@ -691,11 +710,11 @@ class IpythonKernel:
                                                  session=self._id,
                                                  msg_type=reply_msg_type)
             result_message = IPythonMessage(header=result_header,
-                                            parent_header=ipython_message.header,
+                                            parent_header=self.parent_header,
                                             metadata=dict(),
                                             content=result)
         finally:
-            self.__event_loop.create_task(self.publish_kernel_state('idle', ipython_message.header))
+            self.__event_loop.create_task(self.publish_kernel_state('idle', self.parent_header))
             return self.prepare_shell_message(result_message) if result_message else list()
 
 
