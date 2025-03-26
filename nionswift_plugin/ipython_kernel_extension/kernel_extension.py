@@ -42,6 +42,10 @@ class IPythonKernelExtension:
         self.event_loop.call_later(1.0, self.init_delayed)
         self.kernel.start()
 
+        self._setup_matplotlib_integration()
+
+
+
     def close(self) -> None:
         self.__item_map_changed_listener = None
         self.__console_startup_registered_listener = None
@@ -79,3 +83,11 @@ class IPythonKernelExtension:
         item_map = DocumentModel.MappedItemManager().item_map
         api_item_map = {name: self.api.library.get_item_by_specifier(self.api.create_specifier(uuid.UUID(str(item.uuid)))) for name, item in item_map.items()}
         self.kernel.kernel_data.namespace.update(api_item_map)
+
+    def _setup_matplotlib_integration(self) -> None:
+        try:
+            import matplotlib
+            matplotlib.use('module://nion.ipython_kernel.mpl_backend_inline')
+            logger.info('Using nionswift inline matplotlib backend.')
+        except (ImportError, ModuleNotFoundError):
+            pass
