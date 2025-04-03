@@ -27,6 +27,7 @@ from nion.utils import Registry
 from nion.ipython_kernel import zmqstream
 from nion.ipython_kernel import heartbeat
 from nion.ipython_kernel import paths
+from nion.ipython_kernel import magic
 
 logging.basicConfig()
 logger = logging.getLogger('nionswift-ipython-kernel')
@@ -242,13 +243,31 @@ class MessageHandler(typing.Protocol):
         raise NotImplementedError()
 
 
+class EmptyCodeError(ValueError):
+    ...
+
+
 class ExecuteRequestMessageHandler(MessageHandler):
 
     msg_type = 'execute_request'
     reply_msg_type = 'execute_reply'
 
     @staticmethod
+    def preprocess_code(code: str) -> str:
+        # Find line magic statements and remove them from the code string because they will produce syntax errors
+        split_code = code.splitlines()
+        no_line_magic_code: list[str] = []
+        for line in split_code:
+            if line.strip().startswith(magic.LINE_MAGIC_IDENTIFIER_CHARACTER):
+                magic.run_line_magic(line)
+            else:
+                no_line_magic_code.append(line)
+        return '\n'.join(no_line_magic_code)
+
+    @staticmethod
     def compile_code(code: str) -> typing.List[types.CodeType]:
+        if not code:
+            raise EmptyCodeError()
         ast_obj = ast.parse(code)
         compiled_code: typing.List[types.CodeType] = list()
         # If we have a single statement, we can just compile it and return
@@ -289,7 +308,10 @@ class ExecuteRequestMessageHandler(MessageHandler):
         exception: typing.Optional[BaseException] = None
         try:
             code = typing.cast(str, content['code'])
-            compiled = ExecuteRequestMessageHandler.compile_code(code)
+            pre_processed_code = ExecuteRequestMessageHandler.preprocess_code(code)
+            compiled = ExecuteRequestMessageHandler.compile_code(pre_processed_code)
+        except EmptyCodeError:
+            pass
         except Exception as e:
             status = 'error'
             exception = e

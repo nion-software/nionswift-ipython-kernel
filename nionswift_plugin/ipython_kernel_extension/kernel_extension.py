@@ -6,6 +6,7 @@ import uuid
 from nion.utils import Registry
 from nion.swift.model import DocumentModel
 from nion.ipython_kernel import ipython_kernel
+from nion.ipython_kernel import magic
 
 logger = ipython_kernel.logger
 
@@ -88,6 +89,7 @@ class IPythonKernelExtension:
         try:
             import matplotlib
             matplotlib.use('module://nion.ipython_kernel.mpl_backend_inline')
+            magic.register_line_magic(magic.MatplotlibLineMagic())
             logger.info('Using nionswift inline matplotlib backend.')
         except (ImportError, ModuleNotFoundError):
             pass
