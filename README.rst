@@ -55,6 +55,7 @@ you can run your code on a background thread to avoid locking up the UI.
 Here is a short example for how to run code on a thread:
 
 .. code-block:: python
+
   import threading
   import time
 
@@ -63,6 +64,7 @@ Here is a short example for how to run code on a thread:
       print('Done doing something slow.')
 
   threading.Thread(target=do_something_slow).start()
+
 
 This will print ``"Done doing something slow."`` after 10 seconds, but will not freeze the Swift UI.
 
@@ -82,6 +84,7 @@ the function passed to it for execution on the main thread. So for example showi
 can be accomplished like this:
 
 .. code-block:: python
+
   import threading
   import time
   import numpy
@@ -96,6 +99,7 @@ can be accomplished like this:
       api.qeue_task(show_result)
 
   threading.Thread(target=do_something_slow).start()
+
 
 Note that you must not add the call operator (parenthesis) to the function you are passing to ``queue_task``!
 
