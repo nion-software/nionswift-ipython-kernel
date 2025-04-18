@@ -81,9 +81,13 @@ class IPythonKernelExtension:
             self._run_console_startup_lines(typing.cast(ConsoleStartupComponent, component))
 
     def _update_item_map_items(self) -> None:
-        item_map = DocumentModel.MappedItemManager().item_map
-        api_item_map = {name: self.api.library.get_item_by_specifier(self.api.create_specifier(uuid.UUID(str(item.uuid)))) for name, item in item_map.items()}
-        self.kernel.kernel_data.namespace.update(api_item_map)
+        # this is called during project loading. it is absolutely critical that this not throw an exception.
+        try:
+            item_map = DocumentModel.MappedItemManager().item_map
+            api_item_map = {name: self.api.library.get_item_by_specifier(self.api.create_specifier(uuid.UUID(str(item.uuid)))) for name, item in item_map.items()}
+            self.kernel.kernel_data.namespace.update(api_item_map)
+        except Exception as e:
+            logger.error(f'Error updating item map items: {e}')
 
     def _setup_matplotlib_integration(self) -> None:
         try:
