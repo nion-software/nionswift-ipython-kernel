@@ -222,6 +222,7 @@ class ConnectionInfo:
 
     def write_to_file(self, path: str) -> None:
         self_dict = dataclasses.asdict(self)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w+') as f:
             json.dump(self_dict, f, indent=2)
 
