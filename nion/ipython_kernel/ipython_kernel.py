@@ -74,6 +74,22 @@ def register_shell_handler(handler: MessageHandler) -> None:
     Registry.register_component(handler, {MESSAGE_HANDLER_REGISTRY_NAME})
 
 
+def clean_message_dict(msg_dict: dict[str, typing.Any], dataclass: typing.Any) -> dict[str, typing.Any]:
+    """
+    Cleans the message dictionary by removing keys that are not part of the dataclass.
+    This is required because new jupyter messaging protocols can introduce new keys that will cause
+    errors if we don't remove them.
+    Ignoring unknown keys is fine for a kernel, it only needs to process keys that are part of the messaging protocol
+    version the kernel implements.
+    """
+    cleaned_dict = dict()
+    for field in dataclasses.fields(dataclass):
+        name = field.name
+        default = field.default if field.default is not dataclasses.MISSING else field.default_factory
+        cleaned_dict[name] = msg_dict.get(name, default)
+    return cleaned_dict
+
+
 @dataclasses.dataclass(kw_only=True)
 class IPythonMessageHeader:
     msg_id: str = ''
@@ -85,7 +101,8 @@ class IPythonMessageHeader:
 
     @classmethod
     def from_dict(cls, msg_dict: dict[str, typing.Any]) -> IPythonMessageHeader:
-        return cls(**msg_dict)
+        cleaned_msg_dict = clean_message_dict(msg_dict, cls)
+        return cls(**cleaned_msg_dict)
 
     def as_dict(self) -> typing.Dict[str, typing.Any]:
         if not self.msg_type:
