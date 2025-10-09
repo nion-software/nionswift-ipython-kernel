@@ -22,3 +22,8 @@ urls = { "Homepage" = "https://github.com/nion-software/nionswift-ipython-kernel
 
 [tool.setuptools.packages.find]
 include = ["nion", "nion.ipython_kernel", "nionswift_plugin", "nionswift_plugin.ipython_kernel_extension"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "nion/ipython_kernel"
+]
