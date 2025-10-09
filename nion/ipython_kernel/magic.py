@@ -23,7 +23,7 @@ class MagicCommandArgs:
     kwargs: dict[str, typing.Any]
 
 
-class Magic:
+class Magic(typing.Protocol):
     name: str
 
     def parse_args(self, magic_string: str) -> MagicCommandArgs:
@@ -38,8 +38,8 @@ class MatplotlibLineMagic(Magic):
 
     def parse_args(self, magic_args: str) -> MagicCommandArgs:
         split_string = magic_args.split()
-        optlist = []
-        args = []
+        optlist = list[tuple[str, str]]()
+        args = list[str]()
         if split_string:
             optlist, args = getopt.getopt(split_string, 'l', ['list'])
         if not optlist and not args:

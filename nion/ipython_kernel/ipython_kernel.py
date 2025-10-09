@@ -124,7 +124,7 @@ class IPythonMessage:
                    parent_header=IPythonMessageHeader.from_dict(json.loads(msg.parent_header)),
                    metadata=json.loads(msg.metadata),
                    content=json.loads(msg.content),
-                   buffers=msg.buffers.copy())
+                   buffers=msg.buffers.copy())  # type: ignore
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -160,7 +160,7 @@ class SerializedIPythonMessage:
             if not view.contiguous:
                 raise ValueError('Buffers must be contiguous.')
 
-        return cls(header=header, parent_header=parent_header, metadata=metadata, content=content, buffers=ipython_message.buffers.copy())
+        return cls(header=header, parent_header=parent_header, metadata=metadata, content=content, buffers=ipython_message.buffers.copy())  # type: ignore
 
     def is_complete(self) -> bool:
         """Check that all required message parts have been filled"""
@@ -175,8 +175,8 @@ class SerializedIPythonMessage:
         message.append(self.parent_header)
         message.append(self.metadata)
         message.append(self.content)
-        message.extend(self.buffers)
-        return message
+        message.extend(self.buffers)  # type: ignore
+        return message  # type: ignore
 
     @staticmethod
     def _part_bytes(message_part: bytes | zmq.Frame) -> bytes:
@@ -438,7 +438,7 @@ class CompleteRequestHandler(MessageHandler):
         }
         """
         code = content.get('code', '')
-        cursor_pos = content.get('cursor_pos')
+        cursor_pos = typing.cast(int, content.get('cursor_pos'))
         cursor_start = cursor_pos
         completion_code = code[:cursor_pos]
         status = 'ok'
@@ -480,14 +480,14 @@ class CompleteRequestHandler(MessageHandler):
 
 class StdStreamCatcher(io.TextIOWrapper):
 
-    def __init__(self, buffer: typing.Any, event_loop: asyncio.AbstractEventLoop, bufsize=100, existing_stream: typing.Any = None, **kwargs: typing.Any) -> None:
+    def __init__(self, buffer: typing.Any, event_loop: asyncio.AbstractEventLoop, bufsize: int = 100, existing_stream: typing.Any = None, **kwargs: typing.Any) -> None:
         super().__init__(buffer, **kwargs)
         self.__event_loop = event_loop
         self.__bufsize = bufsize
         self.__existing_stream = existing_stream
         self.__lock = threading.RLock()
         self.__buffer: list[str] = list()
-        self.__handle: typing.Optional[asyncio.Task] = None
+        self.__handle: typing.Optional[asyncio.Task[typing.Any]] = None
         self.on_stream_write: typing.Optional[typing.Callable[[str], None]] = None
 
     async def _periodic(self, *, delay: float = 0.0) -> None:
@@ -601,6 +601,8 @@ class IpythonKernel:
 
     def start(self) -> str:
         self._create_streams()
+        assert sys.__stdout__ is not None
+        assert sys.__stderr__ is not None
         self.__stdout_catcher = StdStreamCatcher(sys.__stdout__.buffer, self.__event_loop, existing_stream=sys.stdout if sys.stdout is not sys.__stdout__ else None)
         self.__stdout_catcher.on_stream_write = self._send_stdout_message_to_iopub
         self.__exisiting_stdout = sys.stdout
@@ -689,7 +691,7 @@ class IpythonKernel:
 
         self._sign_message(serialized_message)
 
-        return serialized_message.to_zmq_multipart_message()
+        return typing.cast(list[bytes], serialized_message.to_zmq_multipart_message())
 
     async def send_iopub_message(self, msg: IPythonMessage, topic: str) -> None:
         serialized_message = SerializedIPythonMessage.from_ipython_message(msg)

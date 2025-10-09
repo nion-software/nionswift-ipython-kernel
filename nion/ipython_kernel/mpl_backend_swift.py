@@ -8,7 +8,7 @@ from matplotlib.backend_bases import FigureManagerBase
 from matplotlib._pylab_helpers import Gcf
 
 
-class NionSwiftFigureManager(FigureManagerBase):
+class NionSwiftFigureManager(FigureManagerBase):  # type: ignore
 
     @classmethod
     def pyplot_show(cls, *, block: bool | None = None) -> None:
@@ -29,6 +29,6 @@ class NionSwiftFigureManager(FigureManagerBase):
 
 
 # Matplotlib requires a backend to supply a FigureCanvas class
-class FigureCanvas(FigureCanvasAgg):
+class FigureCanvas(FigureCanvasAgg):  # type: ignore
 
     manager_class = NionSwiftFigureManager

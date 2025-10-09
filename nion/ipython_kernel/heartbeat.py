@@ -41,7 +41,7 @@ class Heartbeat(threading.Thread):
 
         while True:
             try:
-                zmq.device(zmq.QUEUE, self.__socket, self.__socket)
+                zmq.device(zmq.QUEUE, self.__socket, self.__socket)  # type: ignore
             except zmq.ZMQError as e:
                 if e.errno == errno.EINTR:
                     # signal interrupt, resume heartbeat

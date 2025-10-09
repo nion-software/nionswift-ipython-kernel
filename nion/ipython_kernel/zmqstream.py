@@ -60,7 +60,7 @@ class ZMQStream:
         while True:
             try:
                 logger.debug(f'Receiver {self.__name} polling for events.')
-                self.__poll_future = typing.cast(asyncio.Future[typing.Any], self.__socket.poll(flags=zmq.POLLIN))
+                self.__poll_future = typing.cast(asyncio.Future[typing.Any], self.__socket.poll(flags=zmq.POLLIN))  # type: ignore
                 await self.__poll_future
                 if (exception := self.__poll_future.exception()):
                     logger.error(f'Future exception in {self.__name}: {exception}')

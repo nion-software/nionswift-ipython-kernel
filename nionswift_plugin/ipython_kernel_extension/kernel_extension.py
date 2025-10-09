@@ -30,13 +30,13 @@ class IPythonKernelExtension:
         self.event_loop = self.api.application._application.event_loop
         kernel_settings = ipython_kernel.KernelSettings()
         self.kernel = ipython_kernel.IpythonKernel(kernel_settings, event_loop=self.event_loop)
-        execute_handler = ipython_kernel.ExecuteRequestMessageHandler()
+        execute_handler = ipython_kernel.ExecuteRequestMessageHandler()  # type: ignore
         ipython_kernel.register_shell_handler(execute_handler)
-        info_handler = ipython_kernel.KernelInfoMessageHandler()
+        info_handler = ipython_kernel.KernelInfoMessageHandler()  # type: ignore
         ipython_kernel.register_shell_handler(info_handler)
-        is_complete_handler = ipython_kernel.IsCompleteHandler()
+        is_complete_handler = ipython_kernel.IsCompleteHandler()  # type: ignore
         ipython_kernel.register_shell_handler(is_complete_handler)
-        completion_handler = ipython_kernel.CompleteRequestHandler()
+        completion_handler = ipython_kernel.CompleteRequestHandler()  # type: ignore
         ipython_kernel.register_shell_handler(completion_handler)
         Registry.register_component(self.kernel, {'nionswift-ipython-kernel'})
 
@@ -53,7 +53,7 @@ class IPythonKernelExtension:
         Registry.unregister_component(self.kernel, {'nionswift-ipython-kernel'})
         self.kernel.close()
 
-    def init_delayed(self):
+    def init_delayed(self) -> None:
         try:
             self.api.library
         except AssertionError:
@@ -76,7 +76,7 @@ class IPythonKernelExtension:
             logger.error(f'Error running console startup script with id {console_startup_info.console_startup_id}.\n'
                          f'This is the error traceback:\n{traceback.format_exc()}')
 
-    def _console_startup_component_registered(self, component: typing.Any, component_types: typing.Set[str], **kwargs):
+    def _console_startup_component_registered(self, component: typing.Any, component_types: typing.Set[str], **kwargs: typing.Any) -> None:
         if "console-startup" in component_types:
             self._run_console_startup_lines(typing.cast(ConsoleStartupComponent, component))
 
