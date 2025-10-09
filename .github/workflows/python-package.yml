@@ -1,0 +1,35 @@
+name: Python package
+on:
+  push:
+    branches: [ master ]
+    tags: '*'
+  pull_request:
+    branches: [ master ]
+jobs:
+  build-python-package:
+    uses: nion-software/github-workflows/.github/workflows/build-python-package.yml@main
+    secrets:
+      anaconda-token: ${{ secrets.ANACONDA_TOKEN }}
+  pypi-publish:
+    name: Upload release to PyPI
+    needs: [build-python-package]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags')
+    environment: release
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+    - name: Copy files to upload to PyPI to dist.
+      shell: bash
+      run: |
+        mkdir dist
+        find . -name "*.whl" -exec cp {} dist \;
+        find . -name "*.tar.gz" -exec cp {} dist \;
+        ls -lR .
+    - name: Publish package distributions to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        skip-existing: true
+        print-hash: true
