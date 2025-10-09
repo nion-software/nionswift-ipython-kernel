@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nionswift-ipython-kernel"
+version = "0.1.0"
+authors = [
+    { name = "Nion Software", email = "swift@nion.com" }
+]
+description = "An iPython kernel for Nion Swift."
+readme = "README.rst"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13"
+]
+urls = { "Homepage" = "https://github.com/nion-software/nionswift-ipython-kernel" }
+
+[tool.setuptools.packages.find]
+include = ["nion", "nion.ipython_kernel", "nionswift_plugin", "nionswift_plugin.ipython_kernel_extension"]
