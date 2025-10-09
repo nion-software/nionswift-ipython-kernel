@@ -67,7 +67,7 @@ def register_line_magic(magic: Magic) -> None:
 
 
 def get_registered_line_magics() -> set[Magic]:
-    return Registry.get_components_by_type(LINE_MAGIC_REGISTRY_KEY)
+    return typing.cast(set[Magic], Registry.get_components_by_type(LINE_MAGIC_REGISTRY_KEY))
 
 
 def run_line_magic(magic_string: str) -> None:

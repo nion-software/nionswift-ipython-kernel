@@ -121,7 +121,7 @@ def jupyter_config_dir() -> str:
 
     if use_platform_dirs():
         import platformdirs
-        return platformdirs.user_config_dir(APPNAME, appauthor=False)
+        return str(platformdirs.user_config_dir(APPNAME, appauthor=False))
 
     home_dir = get_home_dir()
     return os.path.join(home_dir, '.jupyter')
@@ -142,7 +142,7 @@ def jupyter_data_dir() -> str:
 
     if use_platform_dirs():
         import platformdirs
-        return platformdirs.user_data_dir(APPNAME, appauthor=False)
+        return str(platformdirs.user_data_dir(APPNAME, appauthor=False))
 
     home = get_home_dir()
 
