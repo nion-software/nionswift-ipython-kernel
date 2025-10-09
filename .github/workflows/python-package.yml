@@ -8,6 +8,8 @@ on:
 jobs:
   build-python-package:
     uses: nion-software/github-workflows/.github/workflows/build-python-package.yml@main
+    with:
+      publish-anaconda: false
     secrets:
       anaconda-token: ${{ secrets.ANACONDA_TOKEN }}
   pypi-publish:
