@@ -45,8 +45,6 @@ class IPythonKernelExtension:
 
         self._setup_matplotlib_integration()
 
-
-
     def close(self) -> None:
         self.__item_map_changed_listener = None
         self.__console_startup_registered_listener = None

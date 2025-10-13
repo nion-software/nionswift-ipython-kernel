@@ -645,7 +645,10 @@ class IpythonKernel:
                 self.__connection_info.control_port = self.__control_stream.port
                 ready_event.set()
                 await self.__control_stream.is_active()
-            asyncio.run(run_control_stream())
+            # On Windows, the default event loop does not support add_reader, which is required by zmq.
+            # Therefore, we need to use the SelectorEventLoop on Windows.
+            loop_factory = asyncio.SelectorEventLoop if sys.platform == 'win32' else None
+            asyncio.run(run_control_stream(), loop_factory=loop_factory)
 
         self.__control_thread = threading.Thread(target=make_control_thread, daemon=True)
         self.__control_thread.start()
