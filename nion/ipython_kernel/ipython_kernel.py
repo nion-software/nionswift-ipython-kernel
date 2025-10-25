@@ -760,7 +760,8 @@ class IpythonKernel:
                                             content=result)
         finally:
             self.__event_loop.create_task(self.publish_kernel_state('idle', self.parent_header))
-            return self.prepare_shell_message(result_message) if result_message else list()
+            message = self.prepare_shell_message(result_message) if result_message else list()
+        return message
 
 
     async def process_control_message(self, msgs: list[bytes]) -> list[bytes]:
