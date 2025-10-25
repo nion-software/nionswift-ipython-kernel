@@ -16,9 +16,15 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13"
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14"
 ]
 urls = { "Homepage" = "https://github.com/nion-software/nionswift-ipython-kernel" }
+dependencies = [
+  "pyzmq",
+  "nionutils >=4.14.0,<5.0.0",
+  "nionswift >=16.16,<17.0"
+]
 
 [tool.setuptools.packages.find]
 include = ["nion", "nion.ipython_kernel", "nionswift_plugin", "nionswift_plugin.ipython_kernel_extension"]
