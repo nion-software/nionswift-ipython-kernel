@@ -56,11 +56,12 @@ class IPythonKernelExtension:
             self.api.library
         except AssertionError:
             self.event_loop.call_later(1.0, self.init_delayed)
-        self.__console_startup_registered_listener = typing.cast(typing.Any, Registry.listen_component_registered_event(self._console_startup_component_registered))
-        for component in Registry.get_components_by_type("console-startup"):
-            self._run_console_startup_lines(typing.cast(ConsoleStartupComponent, component))
-        self.__item_map_changed_listener = typing.cast(typing.Any, DocumentModel.MappedItemManager().changed_event.listen(self._update_item_map_items))
-        self._update_item_map_items()
+        else:
+            self.__console_startup_registered_listener = typing.cast(typing.Any, Registry.listen_component_registered_event(self._console_startup_component_registered))
+            for component in Registry.get_components_by_type("console-startup"):
+                self._run_console_startup_lines(typing.cast(ConsoleStartupComponent, component))
+            self.__item_map_changed_listener = typing.cast(typing.Any, DocumentModel.MappedItemManager().changed_event.listen(self._update_item_map_items))
+            self._update_item_map_items()
 
     def _run_console_startup_lines(self, component: ConsoleStartupComponent) -> None:
         console_startup_component = typing.cast(ConsoleStartupComponent, component)
