@@ -26,6 +26,8 @@ class IPythonKernelExtension:
     extension_id = 'nion.experimental.ipython_kernel'
 
     def __init__(self, api_broker: typing.Any) -> None:
+        self.__item_map_changed_listener: typing.Any = None
+        self.__console_startup_registered_listener: typing.Any = None
         self.api = api_broker.get_api(version='~1.0')
         self.event_loop = self.api.application._application.event_loop
         kernel_settings = ipython_kernel.KernelSettings()
