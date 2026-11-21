@@ -545,7 +545,7 @@ class IpythonKernel:
         self.__kernel_data = kernel_data if kernel_data is not None else KernelData()
 
         self.__context = zmq.asyncio.Context()
-        self.__iopub_socket = typing.cast(zmq.Socket[typing.Any], None)
+        self.__iopub_socket = typing.cast(zmq.asyncio.Socket, None)
 
         self.__shell_stream = typing.cast(zmqstream.ZMQStream, None)
         self.__control_stream = typing.cast(zmqstream.ZMQStream, None)
